@@ -1,23 +1,26 @@
-/* Divas Nails · service worker: deja la app disponible sin conexión */
-var CACHE='divas-nails-v2';
-var FILES=['./','./index.html','./manifest.webmanifest','./icon-192.png','./icon-512.png','./icon-180.png'];
-self.addEventListener('install',function(e){
-  e.waitUntil(caches.open(CACHE).then(function(c){return c.addAll(FILES);}).then(function(){return self.skipWaiting();}));
+/* Divas Nails · trabajadora de servicio: deja la aplicación disponible sin conexión */
+var CACHÉ='divas-nails-v3';
+var ARCHIVOS=['./','./index.html','./manifest.webmanifest','./icon-192.png','./icon-512.png','./icon-180.png'];
+auto.addEventListener('instalar',función(e){
+  e.esperaHasta(cachés.abierto(CACHÉ).entonces(función(c){retorno c.agregar todo(ARCHIVOS);}).entonces(función(){retorno auto.saltarEsperando();}));
 });
-self.addEventListener('activate',function(e){
-  e.waitUntil(caches.keys().then(function(ks){
-    return Promise.all(ks.filter(function(k){return k!==CACHE;}).map(function(k){return caches.delete(k);}));
-  }).then(function(){return self.clients.claim();}));
+auto.addEventListener('activar',función(e){
+  e.esperaHasta(cachés.llaves().entonces(función(ks){
+    retorno Promesa.todos(ks.filtro(función(k){retorno k!==CACHÉ;}).mapa(función(k){retorno cachés.eliminar(k);}));
+  }).entonces(función(){retorno auto.clientes.reclamar();}));
 });
-self.addEventListener('fetch',function(e){
-  e.respondWith(
-    caches.match(e.request,{ignoreSearch:true}).then(function(r){
-      if(r) return r;
-      return fetch(e.request).then(function(res){
-        var cp=res.clone();
-        caches.open(CACHE).then(function(c){c.put(e.request,cp);});
-        return res;
-      }).catch(function(){return caches.match('./index.html');});
+auto.addEventListener('buscar',función(e){
+  var req=e.solicitud;
+  var url=nuevo URL(req.url);
+  si(req.método!=='OBTENER' || url.origen!==auto.ubicación.origen){ retorno; }
+  e.responderCon(
+    cachés.partido(req,{ignorarBuscar:verdadero}).entonces(función(r){
+      si(r) retorno r;
+      retorno fetch(req).entonces(función(res){
+        var cp=res.clon();
+        cachés.abierto(CACHÉ).entonces(función(c){ intentar{ c.put(req,cp); }atrapar(err){} });
+        retorno res;
+      }).atrapar(función(){ retorno cachés.partido('./index.html'); });
     })
   );
 });
