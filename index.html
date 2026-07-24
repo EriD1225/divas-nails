@@ -216,6 +216,16 @@ function moneyMsg(n){ const u=usdOf(n); const z=zelleOf(n); return cup(n)+(u!=nu
 
 function compressImage(file,maxSize,quality){return new Promise((res,rej)=>{const rd=new FileReader();rd.onload=()=>{const img=new Image();img.onload=()=>{let w=img.width,h=img.height;if(w>h){if(w>maxSize){h=Math.round(h*maxSize/w);w=maxSize;}}else{if(h>maxSize){w=Math.round(w*maxSize/h);h=maxSize;}}const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);res(c.toDataURL('image/jpeg',quality));};img.onerror=rej;img.src=rd.result;};rd.onerror=rej;rd.readAsDataURL(file);});}
 
+/* ---------- NOTIFICACIONES ---------- */
+async function notifyAdmin(title, body){
+  try{ await sb.from("activity").insert({kind:title, message:body, actor:(ME&&ME.full_name)||""}); }catch(err){}
+}
+function beep(){ try{ const AC=window.AudioContext||window.webkitAudioContext; if(!AC)return; const a=new AC(); const o=a.createOscillator(); const g=a.createGain(); o.connect(g); g.connect(a.destination); o.type="sine"; o.frequency.value=880; g.gain.value=0.07; o.start(); setTimeout(function(){try{o.stop();a.close();}catch(e){}},180); }catch(err){} }
+function showLocalNotif(title, body){
+  beep();
+  try{ if(("Notification" in window) && Notification.permission==="granted"){ new Notification("Divas Nails · "+title, {body:body, icon:"./icon-192.png"}); } }catch(err){}
+  toast(title+": "+body);
+}
 /* ---------- AUTH ---------- */
 $("#loginBtn").addEventListener("click", doLogin);
 $("#pass").addEventListener("keydown",(e)=>{if(e.key==="Enter")doLogin();});
@@ -242,6 +252,7 @@ async function afterLogin(){
   $("#login").classList.add("hidden");
   $("#app").classList.remove("hidden");
   $("#rolePill").textContent = ME.role==="admin" ? "Administradora" : ("Vendedora · "+ME.full_name);
+  if(ME.role==="admin" && ("Notification" in window) && Notification.permission==="default"){ try{ Notification.requestPermission(); }catch(err){} }
   await Promise.all([loadSettings(), loadProducts()]);
   subscribeRealtime();
   if(ME.role==="admin") renderDash(); else renderSell();
@@ -273,6 +284,7 @@ function subscribeRealtime(){
     .on("postgres_changes",{event:"*",schema:"public",table:"sales"}, async()=>{ if(ME.role==="admin"&&CURRENT==="dash") renderDash(); })
     .on("postgres_changes",{event:"*",schema:"public",table:"products"}, async()=>{ await loadProducts(); rerender(); })
     .on("postgres_changes",{event:"*",schema:"public",table:"returns"}, async()=>{ if(ME.role==="admin"){ if(CURRENT==="ret")renderReturns(); else if(CURRENT==="dash")renderDash(); } })
+    .on("postgres_changes",{event:"INSERT",schema:"public",table:"activity"}, (payload)=>{ if(ME.role==="admin" && payload && payload.new){ showLocalNotif(payload.new.kind||"Actividad", payload.new.message||""); } })
     .subscribe();
 }
 function rerender(){ if(CURRENT==="sell")renderSell(); else if(CURRENT==="inv")renderInv(); else if(CURRENT==="dash")renderDash(); else if(CURRENT==="ret")renderReturns(); }
@@ -632,7 +644,8 @@ function openReturn(){
 }
 
 /* ================= VENDEDORA ================= */
-let TICKET={}; let cFilter={q:"",cat:"Todo"}; let SELMODE=false; let SELECTED={};
+let TICKET={}; let cFilter={q:"",cat:"Todo"}; let SELMODE=false; let SELECTED={}; let PAY={};
+const PAY_OPTS=["Transferencia","USD","Zelle","CUP"];
 function renderSell(){
   CURRENT="sell";
   const cats=["Todo"].concat(allCats());
@@ -648,26 +661,87 @@ function renderSell(){
     <div class="filters"><input class="in" style="flex:1;min-width:170px" id="cSearch" placeholder="Buscar producto…" value="${esc(cFilter.q)}" /><div style="display:flex;gap:7px;flex-wrap:wrap">${cats.map(c=>`<button class="chip ${cFilter.cat===c?'on':''}" onclick="setCat('${c}')">${c}</button>`).join("")}</div></div>
     <div class="grid">${cards}</div></div>
     <div class="ticket"><h3>Ticket actual</h3><div class="who">Atiende: ${esc(ME.full_name)}</div>
+      <div style="font-size:12px;color:var(--plum);background:var(--blush);border-radius:9px;padding:7px 10px;margin-bottom:10px">Tasa de hoy: <b>${rate()>0?("1 USD = "+fmt(rate())+" CUP"):"sin definir"}</b>${zfactor()>0?` · Zelle ×${fmt3(zfactor())}`:""}</div>
       <div class="items">${items}</div>
       <div class="ttot"><span style="color:var(--muted);font-size:13px;padding-top:4px">Total</span><span class="n">${money(total)}</span></div>
+      <div style="margin:2px 0 10px"><div style="font-size:12px;color:var(--muted);margin-bottom:6px">Método(s) de pago (elige uno o varios):</div>
+        <div style="display:flex;gap:7px;flex-wrap:wrap">${PAY_OPTS.map(m=>`<button class="chip ${PAY[m]?'on':''}" onclick="togglePay('${m}')">${m}</button>`).join("")}</div></div>
       <button class="btn" ${lines.length===0?"disabled":""} onclick="doSale()">Registrar venta</button>
       <button class="btn alt" style="margin-top:8px" onclick="openReturn()">Registrar devolución / merma</button>
       <button class="btn alt" style="margin-top:8px" onclick="shareCatalog()">Compartir catálogo</button>
+      <button class="btn alt" style="margin-top:8px" onclick="renderSellerReport()">Reporte de ventas por fecha</button>
     </div></div>`;
   const s=$("#cSearch"); s.oninput=(e)=>{cFilter.q=e.target.value;const pos=e.target.selectionStart;renderSell();const n=$("#cSearch");n.focus();n.setSelectionRange(pos,pos);};
 }
 function setCat(c){cFilter.cat=c;renderSell();}
+function togglePay(m){ if(PAY[m])delete PAY[m]; else PAY[m]=true; renderSell(); }
 function addT(id){const p=PRODUCTS.find(x=>x.id===id);if(!p)return;if((TICKET[id]||0)>=p.stock)return;TICKET[id]=(TICKET[id]||0)+1;renderSell();}
 function subT(id){TICKET[id]=Math.max(0,(TICKET[id]||0)-1);if(!TICKET[id])delete TICKET[id];renderSell();}
 async function doSale(){
   const lines=Object.entries(TICKET).filter(([,n])=>n>0).map(([id,qty])=>({product_id:id,qty}));
   if(lines.length===0)return;
+  const methods=Object.keys(PAY).filter(k=>PAY[k]);
+  if(methods.length===0){ toast("Elige al menos un método de pago."); return; }
   const btn=$("#viewRoot").querySelector('.ticket .btn'); if(btn){btn.disabled=true;btn.textContent="Registrando…";}
   const {data,error}=await sb.rpc("register_sale",{items:lines});
   if(error){ toast(error.message&&error.message.indexOf("insuficiente")>=0?"Stock insuficiente para algún producto":"No se pudo registrar la venta"); if(btn){btn.disabled=false;btn.textContent="Registrar venta";} return; }
-  TICKET={}; await refreshProducts(); toast("Venta registrada · "+moneyInline(data.total));
+  try{ await sb.from("sales").update({payment_methods:methods.join(", ")}).eq("id",data.id); }catch(err){}
+  notifyAdmin("Nueva venta", (ME.full_name||"Vendedora")+" registró "+moneyInline(data.total)+" ("+methods.join(", ")+")");
+  TICKET={}; PAY={}; await refreshProducts(); toast("Venta registrada · "+moneyInline(data.total));
 }
 
+async function renderSellerReport(){
+  const ov=document.createElement('div'); ov.className='shareov';
+  const iso=(d)=>d.toISOString().slice(0,10); const t=new Date(); const w=new Date(); w.setDate(t.getDate()-6);
+  ov.innerHTML=`<div class="sharebox mform">
+    <div class="disp" style="font-size:18px;font-weight:600;margin-bottom:8px">Mi reporte de ventas</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+      <div><label class="fld" style="margin-top:0">Desde</label><input class="in" id="srFrom" type="date" style="max-width:160px" value="${iso(w)}" /></div>
+      <div><label class="fld" style="margin-top:0">Hasta</label><input class="in" id="srTo" type="date" style="max-width:160px" value="${iso(t)}" /></div>
+    </div>
+    <div id="srOut" style="margin-top:14px"></div>
+    <div style="display:flex;gap:8px;margin-top:14px"><button class="btn" style="flex:1" id="srGo">Generar</button><button class="btn alt" style="flex:1" id="srClose">Cerrar</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.onclick=(e)=>{ if(e.target===ov) ov.remove(); };
+  ov.querySelector('#srClose').onclick=()=>ov.remove();
+  ov.querySelector('#srGo').onclick=async()=>{
+    const f=ov.querySelector('#srFrom').value, tt=ov.querySelector('#srTo').value;
+    if(!f||!tt){ toast("Elige las dos fechas"); return; }
+    const startISO=new Date(f+"T00:00:00").toISOString(), endISO=new Date(tt+"T23:59:59.999").toISOString();
+    ov.querySelector('#srOut').innerHTML='<div class="mini">Generando…</div>';
+    const {data:sales,error}=await sb.from("sales").select("id,total,units,created_at,payment_methods,sale_items(qty,line_total)").gte("created_at",startISO).lte("created_at",endISO).order("created_at",{ascending:true});
+    if(error){ ov.querySelector('#srOut').innerHTML='<div class="mini" style="color:var(--warn)">No se pudo generar.</div>'; return; }
+    let tRev=0,tUnits=0; (sales||[]).forEach(function(s){ tRev+=Number(s.total)||0; tUnits+=Number(s.units)||0; });
+    if((sales||[]).length===0){ ov.querySelector('#srOut').innerHTML='<div class="empty">No tienes ventas en ese rango.</div>'; return; }
+    ov.querySelector('#srOut').innerHTML='<div class="kpis" style="grid-template-columns:1fr 1fr"><div class="kpi"><div class="lab">Vendido</div><div class="val">'+money(tRev)+'</div></div><div class="kpi"><div class="lab">Ventas / uds</div><div class="val">'+sales.length+' / '+tUnits+'</div></div></div><button class="btn-sm" style="margin-top:12px" id="srImg">Guardar como imagen</button>';
+    window.__srReport={dF:new Date(f).toLocaleDateString("es-ES"),dT:new Date(tt).toLocaleDateString("es-ES"),tRev:tRev,tUnits:tUnits,n:sales.length,seller:ME.full_name,fv:f,tv:tt};
+    ov.querySelector('#srImg').onclick=()=>exportSellerReport();
+  };
+}
+async function exportSellerReport(){
+  const R=window.__srReport; if(!R)return;
+  const W=900,H=520; const c=document.createElement('canvas'); c.width=W;c.height=H; const x=c.getContext('2d');
+  x.fillStyle='#FCF8F6';x.fillRect(0,0,W,H);
+  x.fillStyle='#2A1A2E';x.font='600 40px Fraunces, Georgia, serif';x.fillText('Divas',48,70);
+  const wD=x.measureText('Divas ').width; x.fillStyle='#C43E6D';x.font='italic 600 40px Fraunces, Georgia, serif';x.fillText('Nails',48+wD,70);
+  x.fillStyle='#6E3B5C';x.font='600 22px Inter, sans-serif';x.fillText('Reporte de ventas',48,108);
+  x.fillStyle='#8B7683';x.font='400 18px Inter, sans-serif';x.fillText('Vendedora: '+(R.seller||'')+'  ·  Del '+R.dF+' al '+R.dT,48,138);
+  x.strokeStyle='#EAD3DC';x.beginPath();x.moveTo(48,170);x.lineTo(W-48,170);x.stroke();
+  x.fillStyle='#2A1A2E';x.font='400 22px Inter, sans-serif';
+  x.fillText('Número de ventas:',48,230); x.textAlign='right';x.fillText(String(R.n),W-48,230);x.textAlign='left';
+  x.fillText('Unidades vendidas:',48,278); x.textAlign='right';x.fillText(String(R.tUnits),W-48,278);x.textAlign='left';
+  x.fillStyle='#4E8D6E';x.font='600 30px Inter, sans-serif';x.fillText('Total vendido:',48,360);
+  x.textAlign='right';x.fillText(fmt(R.tRev)+' CUP',W-48,360);x.textAlign='left';
+  const u=usdOf(R.tRev); if(u!=null){x.fillStyle='#8B7683';x.font='400 18px Inter, sans-serif';x.fillText('≈ $'+fmt(u)+' USD',48,398);}
+  x.fillStyle='#8B7683';x.font='400 15px Inter, sans-serif';x.fillText('Divas Nails · generado el '+new Date().toLocaleDateString('es-ES'),48,H-30);
+  const url=c.toDataURL('image/jpeg',0.92);
+  try{ const blob=await (await fetch(url)).blob(); const file=new File([blob],'divas-ventas-'+R.fv+'_'+R.tv+'.jpg',{type:'image/jpeg'});
+    if(navigator.canShare&&navigator.canShare({files:[file]})){ await navigator.share({files:[file],title:'Mi reporte de ventas'}); notifyAdmin("Reporte generado",(R.seller||'Vendedora')+" generó un reporte de ventas"); return; } }catch(err){ if(err&&err.name==='AbortError')return; }
+  const a=document.createElement('a');a.href=url;a.download='divas-ventas-'+R.fv+'_'+R.tv+'.jpg';a.click();
+  notifyAdmin("Reporte generado",(R.seller||'Vendedora')+" generó un reporte de ventas");
+  toast('Reporte guardado');
+}
 /* ================= CATÁLOGO (imágenes) ================= */
 function roundRect(x,px,py,w,h,r){x.beginPath();x.moveTo(px+r,py);x.arcTo(px+w,py,px+w,py+h,r);x.arcTo(px+w,py+h,px,py+h,r);x.arcTo(px,py+h,px,py,r);x.arcTo(px,py,px+w,py,r);x.closePath();}
 function loadImg(src){return new Promise((res)=>{const im=new Image();im.onload=()=>res(im);im.onerror=()=>res(null);im.src=src;});}
@@ -728,8 +802,9 @@ async function shareCatalog(){
   toast('Generando catálogo…');
   let urls=[]; try{ urls=await buildCatalogImages(prods);}catch(err){ toast('No se pudo generar el catálogo'); return; }
   const files=[];
-  try{ for(let i=0;i<urls.length;i++){const blob=await (await fetch(urls[i])).blob();files.push(new File([blob],'divas-catalogo-'+(i+1)+'.jpg',{type:'image/jpeg'}));} if(navigator.canShare&&navigator.canShare({files})){await navigator.share({files,title:'Catálogo Divas Nails'});return;} }catch(err){ if(err&&err.name==='AbortError')return; }
+  try{ for(let i=0;i<urls.length;i++){const blob=await (await fetch(urls[i])).blob();files.push(new File([blob],'divas-catalogo-'+(i+1)+'.jpg',{type:'image/jpeg'}));} if(navigator.canShare&&navigator.canShare({files})){await navigator.share({files,title:'Catálogo Divas Nails'}); if(ME&&ME.role!=='admin') notifyAdmin('Catálogo enviado',(ME.full_name||'Vendedora')+' compartió el catálogo'); return;} }catch(err){ if(err&&err.name==='AbortError')return; }
   urls.forEach((u,i)=>{const a=document.createElement('a');a.href=u;a.download='divas-catalogo-'+(i+1)+'.jpg';a.click();});
+  if(ME&&ME.role!=='admin') notifyAdmin('Catálogo enviado',(ME.full_name||'Vendedora')+' compartió el catálogo');
   toast('Catálogo descargado ('+urls.length+' imagen'+(urls.length>1?'es':'')+')');
 }
 
