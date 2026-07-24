@@ -143,6 +143,11 @@
   .sharetxt{width:100%;height:220px;border:1px solid var(--line);border-radius:12px;padding:12px;font-size:12.5px;font-family:ui-monospace,monospace;color:var(--ink);background:var(--bg);resize:none;outline:none}
   .mform label{display:block;font-size:12.5px;color:var(--plum);font-weight:500;margin:12px 0 6px}
   .mform textarea{width:100%;min-height:80px;border:1px solid var(--line);border-radius:11px;padding:11px;font-size:14px;color:var(--ink);background:var(--white);outline:none;resize:vertical}
+  .notif-in{position:fixed;top:16px;right:16px;left:auto;max-width:340px;background:var(--white);border:1px solid var(--line);border-left:5px solid var(--lacquer);border-radius:12px;padding:13px 16px;box-shadow:0 14px 34px -12px rgba(110,59,92,.5);z-index:90;opacity:0;transform:translateX(20px);transition:opacity .3s,transform .3s;cursor:pointer}
+  .notif-in.show{opacity:1;transform:translateX(0)}
+  .notif-in .nt{font-family:var(--f-disp);font-weight:600;font-size:14.5px;color:var(--lacquerDeep)}
+  .notif-in .nb{font-size:13px;color:var(--plum);margin-top:3px;line-height:1.4}
+  @media (max-width:520px){ .notif-in{left:12px;right:12px;max-width:none} }
 </style>
 </head>
 <body>
@@ -223,8 +228,12 @@ async function notifyAdmin(title, body){
 function beep(){ try{ const AC=window.AudioContext||window.webkitAudioContext; if(!AC)return; const a=new AC(); const o=a.createOscillator(); const g=a.createGain(); o.connect(g); g.connect(a.destination); o.type="sine"; o.frequency.value=880; g.gain.value=0.07; o.start(); setTimeout(function(){try{o.stop();a.close();}catch(e){}},180); }catch(err){} }
 function showLocalNotif(title, body){
   beep();
-  try{ if(("Notification" in window) && Notification.permission==="granted"){ new Notification("Divas Nails · "+title, {body:body, icon:"./icon-192.png"}); } }catch(err){}
-  toast(title+": "+body);
+  const n=document.createElement('div'); n.className='notif-in';
+  n.innerHTML='<div class="nt">'+esc(title)+'</div><div class="nb">'+esc(body)+'</div>';
+  n.onclick=function(){ n.remove(); };
+  document.body.appendChild(n);
+  requestAnimationFrame(function(){ n.classList.add('show'); });
+  setTimeout(function(){ n.classList.remove('show'); setTimeout(function(){ n.remove(); },300); }, 6000);
 }
 /* ---------- AUTH ---------- */
 $("#loginBtn").addEventListener("click", doLogin);
@@ -252,7 +261,6 @@ async function afterLogin(){
   $("#login").classList.add("hidden");
   $("#app").classList.remove("hidden");
   $("#rolePill").textContent = ME.role==="admin" ? "Administradora" : ("Vendedora · "+ME.full_name);
-  if(ME.role==="admin" && ("Notification" in window) && Notification.permission==="default"){ try{ Notification.requestPermission(); }catch(err){} }
   await Promise.all([loadSettings(), loadProducts()]);
   subscribeRealtime();
   if(ME.role==="admin") renderDash(); else renderSell();
